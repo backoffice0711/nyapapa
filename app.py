@@ -9,16 +9,17 @@ st.title("ETF 回測（台股＋美股 → 全部以 TWD 計）")
 
 def backtest_portfolio(tickers, weights, start_date, end_date,
                        one_off=0, dca=0, dca_freq='M', rebalance_freq='M'):
-    # 1) 下載價格，只取『Close』
+    # 1) 下載價格，只取 Close
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True)
     prices = raw['Close'].copy()
-                         
-    # 2) 如果有美股，抓 USD→TWD 匯率，並對應乘上
+
+    # 2) 如果有美股，就抓 USD→TWD 匯率並轉換
     usd_tickers = [t for t in prices.columns if not t.endswith('.TW')]
     if usd_tickers:
         fx = yf.download("TWD=X", start=start_date, end=end_date)['Close']
         fx = fx.reindex(prices.index).ffill()
         prices[usd_tickers] = prices[usd_tickers].multiply(fx, axis=0)
+
     # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
@@ -31,7 +32,7 @@ def backtest_portfolio(tickers, weights, start_date, end_date,
         if d in cash_flow.index:
             cash_flow.loc[d] += dca
 
-    # 5) 回測
+    # 5) 回測主程式
     w = np.array(weights)
     portfolio = pd.Series(index=dates, dtype=float)
     portfolio.iloc[0] = cash_flow.iloc[0]
@@ -105,6 +106,7 @@ if st.button("執行回測"):
     heat = mtx.pivot("Year", "Month", ts)
 
     fig3, ax3 = plt.subplots(figsize=(10,6))
-    sns.heatmap(heat, center=0, cmap="RdYlGn", ax=ax3, cbar_kws={'format':'%.0f%%'})
+    sns.heatmap(heat, center=0, cmap="RdYlGn", ax=ax3,
+                cbar_kws={'format':'%.0f%%'})
     ax3.set_title("月度報酬熱力圖")
     st.pyplot(fig3)
