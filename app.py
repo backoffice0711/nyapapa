@@ -5,30 +5,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.set_option('deprecation.showPyplotGlobalUse', False)
-st.title("ETF 回測（含台股＋美股 → 統一以 TWD）")
+st.title("ETF 回測（台股＋美股 → 全部以 TWD 計）")
 
 def backtest_portfolio(tickers, weights, start_date, end_date,
                        one_off=0, dca=0, dca_freq='M', rebalance_freq='M'):
-    # 1) 抓股價
+    # 1) 下載價格
     prices = yf.download(tickers, start=start_date, end=end_date,
                          auto_adjust=True)['Close']
 
-    # 2) 如果有美股（不以 .TW 結尾），就抓「USD→TWD」匯率 (TWD=X)
+    # 2) 美股轉 TWD
     usd_tickers = [t for t in tickers if not t.endswith('.TW')]
     if usd_tickers:
         fx = yf.download("TWD=X", start=start_date, end=end_date)['Close']
-        # align index、forward fill
         fx = fx.reindex(prices.index).ffill()
-        # 將美股價格轉成台幣
         for t in usd_tickers:
             prices[t] = prices[t] * fx
 
-    # 3) 算每日報酬
+    # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
 
-    # 4) 建現金流（一次性 + DCA）
+    # 4) 現金流（一次性 + DCA）
     cash_flow = pd.Series(0, index=dates)
     cash_flow.iloc[0] += one_off
     dca_dates = prices.resample(dca_freq).first().index
@@ -36,12 +33,14 @@ def backtest_portfolio(tickers, weights, start_date, end_date,
         if d in cash_flow.index:
             cash_flow.loc[d] += dca
 
-    # 5) 回測邏輯
+    # 5) 回測主程式
     w = np.array(weights)
     portfolio = pd.Series(index=dates, dtype=float)
     portfolio.iloc[0] = cash_flow.iloc[0]
-    rebalance_dates = [grp.index[-1]
-        for _, grp in prices.groupby(pd.Grouper(freq=rebalance_freq))]
+    rebalance_dates = [
+        grp.index[-1]
+        for _, grp in prices.groupby(pd.Grouper(freq=rebalance_freq))
+    ]
 
     for i in range(1, len(dates)):
         portfolio.iloc[i] = (
@@ -56,7 +55,7 @@ def backtest_portfolio(tickers, weights, start_date, end_date,
     return portfolio, prices, returns
 
 # ───────────────────────────────────────────────────
-# 輸入
+# 參數輸入
 tickers_txt = st.text_input("標的（逗號分隔）", "2330.TW,00850.TW,VOO,AAPL")
 weights_txt = st.text_input("權重（加總=1）",       "0.4,0.3,0.2,0.1")
 start = st.date_input("開始日", pd.to_datetime("2015-01-01"))
@@ -86,7 +85,7 @@ if st.button("執行回測"):
     ax1.set_title("資產配置（TWD）")
     st.pyplot(fig1)
 
-    # 2) 累積績效＋關鍵數據
+    # 2) 累積績效＋關鍵指標
     fig2, ax2 = plt.subplots(figsize=(10,4))
     ax2.plot(pf.index, pf.values, label="Portfolio (TWD)")
     ax2.set_title("累積績效")
@@ -108,6 +107,6 @@ if st.button("執行回測"):
     heat = mtx.pivot("Year", "Month", ts)
 
     fig3, ax3 = plt.subplots(figsize=(10,6))
-    sns.heatmap(heat, annot=False, fmt=".2%", center=0, cmap="RdYlGn", ax=ax3)
+    sns.heatmap(heat, center=0, cmap="RdYlGn", ax=ax3, cbar_kws={'format':'%.0f%%'})
     ax3.set_title("月度報酬熱力圖")
     st.pyplot(fig3)
