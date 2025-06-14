@@ -11,35 +11,32 @@ def backtest_portfolio(
     tickers, weights, start_date, end_date,
     one_off=0, dca=0, dca_freq='M', rebalance_freq='M'
 ):
-    # 1) 下載價格，只要收盤價
+    # 1) 下載價格，只要 Close
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True)
-    prices = raw["Close"].copy()
+    prices = raw["Close"].copy()  # DataFrame: index=日期, columns=tickers
 
-    # 2) 美股換算成台幣
+    # 2) 美股 → TWD
     usd_cols = [t for t in prices.columns if not t.endswith(".TW")]
     if usd_cols:
         fx = yf.download("TWD=X", start=start_date, end=end_date)["Close"]
-        fx = fx.reindex(prices.index).ffill()
-        # NumPy broadcasting：先取出 numpy 陣列
-        fx_vals = fx.values             # shape = (n_dates,)
-        arr = prices[usd_cols].values   # shape = (n_dates, n_usd_cols)
-        # 相乘後重建一個 DataFrame
+        fx = fx.reindex(prices.index).ffill()  # align 並向前補值
+        # 用 numpy 做逐列相乘
+        fx_vals = fx.values               # shape = (n_dates,)
+        arr = prices[usd_cols].values     # shape = (n_dates, len(usd_cols))
         converted = pd.DataFrame(
-            arr * fx_vals[:, None],
+            arr * fx_vals[:, None],       # broadcasting → shape = (n_dates, len(usd_cols))
             index=prices.index,
             columns=usd_cols
         )
-        # 全部換掉原本的美股價格
-        prices[usd_cols] = converted
+        prices[usd_cols] = converted      # 一次性回寫
 
     # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
 
-    # 4) 現金流（一槍 + DCA）
+    # 4) 現金流：一次性投入 + 定期定額
     cash_flow = pd.Series(0.0, index=dates)
     cash_flow.iloc[0] = one_off
-    # 定期定額
     dca_dates = prices.resample(dca_freq).first().index
     for d in dca_dates:
         if d in cash_flow.index:
@@ -49,7 +46,6 @@ def backtest_portfolio(
     w = np.array(weights)
     pf = pd.Series(index=dates, dtype=float)
     pf.iloc[0] = cash_flow.iloc[0]
-    # 重平衡日
     rebalance_dates = [
         grp.index[-1]
         for _, grp in prices.groupby(pd.Grouper(freq=rebalance_freq))
@@ -57,7 +53,7 @@ def backtest_portfolio(
 
     for i in range(1, len(dates)):
         pf.iloc[i] = (
-            pf.iloc[i - 1] * (1 + returns.iloc[i].dot(w))
+            pf.iloc[i-1] * (1 + returns.iloc[i].dot(w))
             + cash_flow.iloc[i]
         )
         if dates[i] in rebalance_dates:
@@ -68,7 +64,7 @@ def backtest_portfolio(
     return pf, prices, returns
 
 # ───────────────────────────────────────────────────
-# 參數輸入 UI
+# 參數輸入
 tickers_txt = st.text_input("標的（逗號分隔）", "2330.TW,00850.TW,VOO,AAPL")
 weights_txt = st.text_input("權重（加總=1）",       "0.4,0.3,0.2,0.1")
 start = st.date_input("開始日", pd.to_datetime("2015-01-01"))
@@ -92,35 +88,17 @@ if st.button("執行回測"):
         rebalance_freq=rebalance_freq
     )
 
-    # 資產配置圓餅圖
+    # 1) 資產配置圓餅圖
     fig1, ax1 = plt.subplots()
     ax1.pie(ws, labels=ts, autopct="%.1f%%")
     ax1.set_title("資產配置（TWD）")
     st.pyplot(fig1)
 
-    # 累積績效＋關鍵指標
+    # 2) 累積績效 + 關鍵指標
     fig2, ax2 = plt.subplots(figsize=(10,4))
     ax2.plot(pf.index, pf.values, label="Portfolio (TWD)")
     ax2.set_title("累積績效")
     ax2.set_xlabel("日期"); ax2.set_ylabel("台幣價值")
     st.pyplot(fig2)
 
-    total_ret = pf.iloc[-1] / pf.iloc[0] - 1
-    ann_ret   = (1 + total_ret) ** (252 / len(pf)) - 1
-    max_dd    = (pf / pf.cummax() - 1).min()
-    st.write(f"**期間累積報酬**：{total_ret*100:.2f}%")
-    st.write(f"**年化報酬率**：{ann_ret*100:.2f}%")
-    st.write(f"**最大回撤**：{max_dd*100:.2f}%")
-
-    # 月度報酬熱力圖
-    monthly = prices.resample("M").last().pct_change().fillna(0)
-    dfm = monthly.copy()
-    dfm.index = pd.to_datetime(dfm.index)
-    dfm["Year"], dfm["Month"] = dfm.index.year, dfm.index.month
-    heat = dfm.pivot("Year", "Month", ts)
-
-    fig3, ax3 = plt.subplots(figsize=(10,6))
-    sns.heatmap(heat, center=0, cmap="RdYlGn", ax=ax3,
-                cbar_kws={"format":"%.0f%%"})
-    ax3.set_title("月度報酬熱力圖")
-    st.pyplot(fig3)
+    total_ret = pf.iloc[-1] / pf.iloc[0]
