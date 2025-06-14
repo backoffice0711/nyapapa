@@ -12,15 +12,13 @@ def backtest_portfolio(tickers, weights, start_date, end_date,
     # 1) 下載價格，只取『Close』
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True)
     prices = raw['Close'].copy()
-
+                         
     # 2) 如果有美股，抓 USD→TWD 匯率，並對應乘上
     usd_tickers = [t for t in prices.columns if not t.endswith('.TW')]
     if usd_tickers:
-    fx = yf.download("TWD=X", start=start_date, end=end_date)['Close']
-    fx = fx.reindex(prices.index).ffill()
-    # 這行取代原本的 for 迴圈
-    prices[usd_tickers] = prices[usd_tickers].multiply(fx, axis=0)
-
+        fx = yf.download("TWD=X", start=start_date, end=end_date)['Close']
+        fx = fx.reindex(prices.index).ffill()
+        prices[usd_tickers] = prices[usd_tickers].multiply(fx, axis=0)
     # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
