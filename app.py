@@ -7,24 +7,29 @@ import seaborn as sns
 
 st.title("ETF 回測（台股＋美股 → 全部以 TWD 計）")
 
-def backtest_portfolio(tickers, weights, start_date, end_date,
-                       one_off=0, dca=0, dca_freq='M', rebalance_freq='M'):
+def backtest_portfolio(
+    tickers, weights, start_date, end_date,
+    one_off=0, dca=0, dca_freq='M', rebalance_freq='M'
+):
     # 1) 下載價格，只取 Close
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True)
     prices = raw['Close'].copy()
 
-    # 2) 如果有美股，就抓 USD→TWD 匯率並轉換
+    # 2) 美股轉 TWD
     usd_tickers = [t for t in prices.columns if not t.endswith('.TW')]
     if usd_tickers:
         fx = yf.download("TWD=X", start=start_date, end=end_date)['Close']
         fx = fx.reindex(prices.index).ffill()
-        prices[usd_tickers] = prices[usd_tickers].multiply(fx, axis=0)
+        # 用 numpy broadcasting 一對一相乘
+        fx_vals = fx.values                      # shape=(n_dates,)
+        arr = prices[usd_tickers].values         # shape=(n_dates, n_usd_tickers)
+        prices[usd_tickers] = arr * fx_vals[:, None]
 
     # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
 
-    # 4) 現金流（一槍投入 + DCA）
+    # 4) 現金流（一次性 + DCA）
     cash_flow = pd.Series(0, index=dates)
     cash_flow.iloc[0] += one_off
     dca_dates = prices.resample(dca_freq).first().index
@@ -78,13 +83,13 @@ if st.button("執行回測"):
         rebalance_freq=rebalance_freq
     )
 
-    # 1) 資產配置圓餅圖
+    # 資產配置圓餅圖
     fig1, ax1 = plt.subplots()
     ax1.pie(ws, labels=ts, autopct='%.1f%%')
     ax1.set_title("資產配置（TWD）")
     st.pyplot(fig1)
 
-    # 2) 累積績效＋關鍵指標
+    # 累積績效 + 關鍵指標
     fig2, ax2 = plt.subplots(figsize=(10,4))
     ax2.plot(pf.index, pf.values, label="Portfolio (TWD)")
     ax2.set_title("累積績效")
@@ -98,7 +103,7 @@ if st.button("執行回測"):
     st.write(f"**年化報酬率**：{ann_ret*100:.2f}%")
     st.write(f"**最大回撤**：{max_dd*100:.2f}%")
 
-    # 3) 月度報酬熱力圖
+    # 月度報酬熱力圖
     monthly = prices.resample('M').last().pct_change().fillna(0)
     mtx = monthly.copy()
     mtx.index = pd.to_datetime(mtx.index)
