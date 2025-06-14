@@ -15,26 +15,21 @@ def backtest_portfolio(
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True)
     prices = raw["Close"].copy()  # DataFrame: index=日期, columns=tickers
 
-    # 2) 美股 → TWD
+    # 2) 美股換算成 TWD
     usd_cols = [t for t in prices.columns if not t.endswith(".TW")]
     if usd_cols:
+        # 下載美元兌台幣匯率，取 Close → 一維 Series
         fx = yf.download("TWD=X", start=start_date, end=end_date)["Close"]
-        fx = fx.reindex(prices.index).ffill()  # align 並向前補值
-        # 用 numpy 做逐列相乘
-        fx_vals = fx.values               # shape = (n_dates,)
-        arr = prices[usd_cols].values     # shape = (n_dates, len(usd_cols))
-        converted = pd.DataFrame(
-            arr * fx_vals[:, None],       # broadcasting → shape = (n_dates, len(usd_cols))
-            index=prices.index,
-            columns=usd_cols
-        )
-        prices[usd_cols] = converted      # 一次性回寫
+        # 跟 prices 同步 index，向前填值
+        fx = fx.reindex(prices.index).ffill()
+        # 用 pandas multiply（axis=0 表示以 index 對齊）
+        prices[usd_cols] = prices[usd_cols].multiply(fx, axis="index")
 
     # 3) 日報酬
     returns = prices.pct_change().fillna(0)
     dates = prices.index
 
-    # 4) 現金流：一次性投入 + 定期定額
+    # 4) 現金流：一次性 + 定期定額
     cash_flow = pd.Series(0.0, index=dates)
     cash_flow.iloc[0] = one_off
     dca_dates = prices.resample(dca_freq).first().index
@@ -88,17 +83,35 @@ if st.button("執行回測"):
         rebalance_freq=rebalance_freq
     )
 
-    # 1) 資產配置圓餅圖
+    # 資產配置圓餅圖
     fig1, ax1 = plt.subplots()
     ax1.pie(ws, labels=ts, autopct="%.1f%%")
     ax1.set_title("資產配置（TWD）")
     st.pyplot(fig1)
 
-    # 2) 累積績效 + 關鍵指標
+    # 累積績效 + 關鍵指標
     fig2, ax2 = plt.subplots(figsize=(10,4))
     ax2.plot(pf.index, pf.values, label="Portfolio (TWD)")
     ax2.set_title("累積績效")
     ax2.set_xlabel("日期"); ax2.set_ylabel("台幣價值")
     st.pyplot(fig2)
 
-    total_ret = pf.iloc[-1] / pf.iloc[0]
+    total_ret = pf.iloc[-1] / pf.iloc[0] - 1
+    ann_ret   = (1 + total_ret) ** (252 / len(pf)) - 1
+    max_dd    = (pf / pf.cummax() - 1).min()
+    st.write(f"**期間累積報酬**：{total_ret*100:.2f}%")
+    st.write(f"**年化報酬率**：{ann_ret*100:.2f}%")
+    st.write(f"**最大回撤**：{max_dd*100:.2f}%")
+
+    # 月度報酬熱力圖
+    monthly = prices.resample("M").last().pct_change().fillna(0)
+    dfm = monthly.copy()
+    dfm.index = pd.to_datetime(dfm.index)
+    dfm["Year"], dfm["Month"] = dfm.index.year, dfm.index.month
+    heat = dfm.pivot("Year", "Month", ts)
+
+    fig3, ax3 = plt.subplots(figsize=(10,6))
+    sns.heatmap(heat, center=0, cmap="RdYlGn", ax=ax3,
+                cbar_kws={"format":"%.0f%%"})
+    ax3.set_title("月度報酬熱力圖")
+    st.pyplot(fig3)
